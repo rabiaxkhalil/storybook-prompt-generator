@@ -139,6 +139,37 @@ def rewrite_story_with_gpt4(story_arc):
     )
     return response.choices[0].message.content.strip()
 
+def generate_from_entries(entries):
+    """Generate a story from a list of journal entries."""
+    # Generate story arc
+    story = generate_story_arc(entries)
+    
+    # Rewrite story in Pixar style
+    pixar_story = rewrite_story_with_gpt4(story)
+    
+    # Create analysis and story text
+    analysis_text = "=== Emotional Analysis ===\n\n"
+    for idx, entry in enumerate(entries):
+        sentiment = analyze_sentiment(entry)
+        tone = get_emotional_tone(sentiment['compound'])
+        keyword_emotion = analyze_sentiment_keywords(entry)
+        analysis_text += f"Entry {idx + 1}:\n"
+        analysis_text += f"VADER Emotional tone: {tone}\n"
+        analysis_text += f"Keyword-based emotion: {keyword_emotion}\n"
+        analysis_text += f"Sentiment score: {sentiment['compound']:.2f}\n\n"
+    
+    story_text = "\n=== Children's Story Arc ===\n\n"
+    story_text += "The Beginning:\n"
+    story_text += textwrap.fill(story['beginning'], width=80) + "\n\n"
+    story_text += "The Challenge:\n"
+    story_text += textwrap.fill(story['challenge'], width=80) + "\n\n"
+    story_text += "The Resolution:\n"
+    story_text += textwrap.fill(story['resolution'], width=80) + "\n\n"
+    story_text += "\n=== Pixar-style Children's Story (First Person) ===\n\n"
+    story_text += pixar_story + "\n"
+    
+    return analysis_text + story_text
+
 def main():
     try:
         # Read the CSV file
@@ -151,31 +182,12 @@ def main():
         # Process entries
         entries = df['entry_text'].tolist()
         
-        # Generate story
-        story = generate_story_arc(entries)
-        pixar_story = rewrite_story_with_gpt4(story)
+        # Generate story using the new function
+        story_text = generate_from_entries(entries)
         
         # Write results to output file
         with open('weekly_story.txt', 'w') as f:
-            f.write("=== Emotional Analysis ===\n\n")
-            for idx, entry in enumerate(entries):
-                sentiment = analyze_sentiment(entry)
-                tone = get_emotional_tone(sentiment['compound'])
-                keyword_emotion = analyze_sentiment_keywords(entry)
-                f.write(f"Entry {idx + 1} ({df['date'][idx]}):\n")
-                f.write(f"VADER Emotional tone: {tone}\n")
-                f.write(f"Keyword-based emotion: {keyword_emotion}\n")
-                f.write(f"Sentiment score: {sentiment['compound']:.2f}\n\n")
-            
-            f.write("\n=== Children's Story Arc ===\n\n")
-            f.write("The Beginning:\n")
-            f.write(textwrap.fill(story['beginning'], width=80) + "\n\n")
-            f.write("The Challenge:\n")
-            f.write(textwrap.fill(story['challenge'], width=80) + "\n\n")
-            f.write("The Resolution:\n")
-            f.write(textwrap.fill(story['resolution'], width=80) + "\n\n")
-            f.write("\n=== Pixar-style Children's Story (First Person) ===\n\n")
-            f.write(pixar_story + "\n")
+            f.write(story_text)
             
         print("Story generation complete! Check 'weekly_story.txt' for results.")
         
