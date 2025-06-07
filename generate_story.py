@@ -7,6 +7,12 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from datetime import datetime
 import textwrap
 import re
+from typing import List, Dict, Union, Optional
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -17,7 +23,11 @@ if not API_KEY:
     raise ValueError("Please set the OPENAI_API_KEY environment variable")
 
 # Download required NLTK data
-nltk.download('vader_lexicon')
+try:
+    nltk.download('vader_lexicon', quiet=True)
+except Exception as e:
+    logger.error(f"Failed to download NLTK data: {e}")
+    raise
 
 # Define emotional keywords
 EMOTION_KEYWORDS = {
@@ -27,8 +37,19 @@ EMOTION_KEYWORDS = {
     'excited': ['excited', 'wonderful', 'amazing', 'productive', 'successful', 'great']
 }
 
-def analyze_sentiment_keywords(text):
-    """Analyze sentiment using keyword matching."""
+def analyze_sentiment_keywords(text: str) -> str:
+    """
+    Analyze sentiment using keyword matching.
+    
+    Args:
+        text (str): The text to analyze
+        
+    Returns:
+        str: The dominant emotion found in the text
+    """
+    if not text or not isinstance(text, str):
+        return "neutral"
+        
     text = text.lower()
     emotions = {}
     for emotion, keywords in EMOTION_KEYWORDS.items():
@@ -39,14 +60,32 @@ def analyze_sentiment_keywords(text):
         return dominant_emotion[0] if dominant_emotion[1] > 0 else "neutral"
     return "neutral"
 
-def analyze_sentiment(text):
-    """Analyze the sentiment of a given text using VADER."""
+def analyze_sentiment(text: str) -> Dict[str, float]:
+    """
+    Analyze the sentiment of a given text using VADER.
+    
+    Args:
+        text (str): The text to analyze
+        
+    Returns:
+        Dict[str, float]: Dictionary containing sentiment scores
+    """
+    if not text or not isinstance(text, str):
+        return {'neg': 0.0, 'neu': 1.0, 'pos': 0.0, 'compound': 0.0}
+        
     sia = SentimentIntensityAnalyzer()
-    scores = sia.polarity_scores(text)
-    return scores
+    return sia.polarity_scores(text)
 
-def get_emotional_tone(compound_score):
-    """Convert compound sentiment score to emotional tone."""
+def get_emotional_tone(compound_score: float) -> str:
+    """
+    Convert compound sentiment score to emotional tone.
+    
+    Args:
+        compound_score (float): The compound sentiment score
+        
+    Returns:
+        str: The emotional tone description
+    """
     if compound_score >= 0.5:
         return "very positive"
     elif compound_score > 0:
@@ -58,8 +97,19 @@ def get_emotional_tone(compound_score):
     else:
         return "very negative"
 
-def generate_story_arc(entries):
-    """Generate a 3-part children's story arc based on the week's entries."""
+def generate_story_arc(entries: List[str]) -> Dict[str, str]:
+    """
+    Generate a 3-part children's story arc based on the entries.
+    
+    Args:
+        entries (List[str]): List of journal entries
+        
+    Returns:
+        Dict[str, str]: Dictionary containing the story arc parts
+    """
+    if not entries:
+        raise ValueError("No entries provided")
+        
     # Analyze overall emotional progression
     sentiments = [analyze_sentiment(entry)['compound'] for entry in entries]
     keyword_emotions = [analyze_sentiment_keywords(entry) for entry in entries]
@@ -121,56 +171,94 @@ def generate_story_arc(entries):
     
     return story
 
-def rewrite_story_with_gpt4(story_arc):
-    prompt = (
-        "Rewrite the following children's story arc into a Pixar-style children's story, "
-        "told in the first person from the child's perspective. Make it warm, emotional, and engaging.\n\n"
-        f"Beginning: {story_arc['beginning']}\n"
-        f"Challenge: {story_arc['challenge']}\n"
-        f"Resolution: {story_arc['resolution']}\n\n"
-        "Pixar-style story (first person):"
-    )
-    client = openai.OpenAI(api_key=API_KEY)
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=700,
-        temperature=0.8
-    )
-    return response.choices[0].message.content.strip()
+def rewrite_story_with_gpt4(story_arc: Dict[str, str]) -> str:
+    """
+    Rewrite the story arc using GPT-3.5-turbo.
+    
+    Args:
+        story_arc (Dict[str, str]): The story arc to rewrite
+        
+    Returns:
+        str: The rewritten story
+        
+    Raises:
+        Exception: If there's an error with the OpenAI API call
+    """
+    try:
+        prompt = (
+            "Rewrite the following children's story arc into a Pixar-style children's story, "
+            "told in the first person from the child's perspective. Make it warm, emotional, and engaging.\n\n"
+            f"Beginning: {story_arc['beginning']}\n"
+            f"Challenge: {story_arc['challenge']}\n"
+            f"Resolution: {story_arc['resolution']}\n\n"
+            "Pixar-style story (first person):"
+        )
+        client = openai.OpenAI(api_key=API_KEY)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=700,
+            temperature=0.8
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Error in OpenAI API call: {e}")
+        return "Error: Could not generate story. Please try again later."
 
-def generate_from_entries(entries):
-    """Generate a story from a list of journal entries."""
-    # Generate story arc
-    story = generate_story_arc(entries)
+def generate_from_entries(entries: List[str]) -> str:
+    """
+    Generate a story from a list of journal entries.
     
-    # Rewrite story in Pixar style
-    pixar_story = rewrite_story_with_gpt4(story)
+    Args:
+        entries (List[str]): List of journal entries
+        
+    Returns:
+        str: The generated story and analysis
+        
+    Raises:
+        ValueError: If entries is empty or contains invalid data
+    """
+    if not entries:
+        raise ValueError("No entries provided")
+        
+    if not all(isinstance(entry, str) for entry in entries):
+        raise ValueError("All entries must be strings")
     
-    # Create analysis and story text
-    analysis_text = "=== Emotional Analysis ===\n\n"
-    for idx, entry in enumerate(entries):
-        sentiment = analyze_sentiment(entry)
-        tone = get_emotional_tone(sentiment['compound'])
-        keyword_emotion = analyze_sentiment_keywords(entry)
-        analysis_text += f"Entry {idx + 1}:\n"
-        analysis_text += f"VADER Emotional tone: {tone}\n"
-        analysis_text += f"Keyword-based emotion: {keyword_emotion}\n"
-        analysis_text += f"Sentiment score: {sentiment['compound']:.2f}\n\n"
-    
-    story_text = "\n=== Children's Story Arc ===\n\n"
-    story_text += "The Beginning:\n"
-    story_text += textwrap.fill(story['beginning'], width=80) + "\n\n"
-    story_text += "The Challenge:\n"
-    story_text += textwrap.fill(story['challenge'], width=80) + "\n\n"
-    story_text += "The Resolution:\n"
-    story_text += textwrap.fill(story['resolution'], width=80) + "\n\n"
-    story_text += "\n=== Pixar-style Children's Story (First Person) ===\n\n"
-    story_text += pixar_story + "\n"
-    
-    return analysis_text + story_text
+    try:
+        # Generate story arc
+        story = generate_story_arc(entries)
+        
+        # Rewrite story in Pixar style
+        pixar_story = rewrite_story_with_gpt4(story)
+        
+        # Create analysis and story text
+        analysis_text = "=== Emotional Analysis ===\n\n"
+        for idx, entry in enumerate(entries):
+            sentiment = analyze_sentiment(entry)
+            tone = get_emotional_tone(sentiment['compound'])
+            keyword_emotion = analyze_sentiment_keywords(entry)
+            analysis_text += f"Entry {idx + 1}:\n"
+            analysis_text += f"VADER Emotional tone: {tone}\n"
+            analysis_text += f"Keyword-based emotion: {keyword_emotion}\n"
+            analysis_text += f"Sentiment score: {sentiment['compound']:.2f}\n\n"
+        
+        story_text = "\n=== Children's Story Arc ===\n\n"
+        story_text += "The Beginning:\n"
+        story_text += textwrap.fill(story['beginning'], width=80) + "\n\n"
+        story_text += "The Challenge:\n"
+        story_text += textwrap.fill(story['challenge'], width=80) + "\n\n"
+        story_text += "The Resolution:\n"
+        story_text += textwrap.fill(story['resolution'], width=80) + "\n\n"
+        story_text += "\n=== Pixar-style Children's Story (First Person) ===\n\n"
+        story_text += pixar_story + "\n"
+        
+        return analysis_text + story_text
+    except Exception as e:
+        logger.error(f"Error generating story: {e}")
+        raise
 
 def main():
+    """Main function to process journal entries and generate a story."""
     try:
         # Read the CSV file
         df = pd.read_csv('journal_entries.csv')
@@ -189,12 +277,12 @@ def main():
         with open('weekly_story.txt', 'w') as f:
             f.write(story_text)
             
-        print("Story generation complete! Check 'weekly_story.txt' for results.")
+        logger.info("Story generation complete! Check 'weekly_story.txt' for results.")
         
     except FileNotFoundError:
-        print("Error: journal_entries.csv not found. Please ensure the file exists.")
+        logger.error("Error: journal_entries.csv not found. Please ensure the file exists.")
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        logger.error(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
